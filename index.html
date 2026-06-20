@@ -26,7 +26,7 @@
 </head>
 <body>
 <canvas id="stage"></canvas>
-<div id="hint">F = フルスクリーン / ↑↓ = 強度</div>
+<div id="hint">F = フルスクリーン / ↑↓ = 強度 / 画面を触るとアメーバ</div>
 <script>
 (() => {
   const canvas = document.getElementById('stage');
@@ -69,6 +69,78 @@
 
   let intensity = 1.0;
   let T = 0, last = performance.now();
+
+  // ---- 触ってうねうねアメーバ ----
+  const pointer = { x: 0, y: 0, has: false };
+  const blob = { x: 0, y: 0, inited: false };
+  let pointerActivity = 0;  // 0..1（離すとフェード）
+
+  function setPointer(e) {
+    const t = e.touches ? e.touches[0] : e;
+    if (!t) return;
+    pointer.x = t.clientX * DPR;
+    pointer.y = t.clientY * DPR;
+    pointer.has = true;
+    pointerActivity = Math.min(1, pointerActivity + 0.18);
+    if (!blob.inited) { blob.x = pointer.x; blob.y = pointer.y; blob.inited = true; }
+  }
+  window.addEventListener('pointermove', setPointer);
+  window.addEventListener('pointerdown', e => { setPointer(e); pointerActivity = 1; });
+  window.addEventListener('touchmove', e => { setPointer(e); e.preventDefault(); }, { passive: false });
+  window.addEventListener('touchstart', e => { setPointer(e); pointerActivity = 1; });
+
+  function drawAmoeba(dt) {
+    pointerActivity = Math.max(0, pointerActivity - dt * 0.45);
+    if (pointerActivity < 0.01 || !blob.inited) return;
+
+    // バネ追従（柔らかく）
+    blob.x += (pointer.x - blob.x) * 0.20;
+    blob.y += (pointer.y - blob.y) * 0.20;
+
+    const cx = blob.x, cy = blob.y;
+    const baseR = BASE * 0.16 * intensity;
+    const segments = 28;
+
+    ctx.globalCompositeOperation = 'source-over';
+    // 七色のアメーバを少しずつズラして重ねる → うねうね生命体
+    for (let i = 0; i < HUES.length; i++) {
+      const hue = (HUES[i] + T * 22) % 360;
+      const ph = i * 0.85;
+
+      ctx.beginPath();
+      for (let j = 0; j <= segments; j++) {
+        const a = (j / segments) * Math.PI * 2;
+        // 多重サインノイズで有機的な輪郭
+        const n =
+            Math.sin(a * 3 + T * 2.1 + ph) * 0.28 +
+            Math.sin(a * 5 + T * 1.4 + ph * 1.7) * 0.16 +
+            Math.cos(a * 2 + T * 0.8 + ph * 0.4) * 0.10;
+        const r = baseR * (0.55 + 0.45 * (0.7 + n) + i * 0.04);
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (j === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseR * 1.3);
+      g.addColorStop(0,   `hsla(${hue}, 100%, 60%, ${0.42 * pointerActivity})`);
+      g.addColorStop(0.5, `hsla(${hue}, 100%, 70%, ${0.18 * pointerActivity})`);
+      g.addColorStop(1,   `hsla(${hue}, 100%, 80%, 0)`);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+
+    // 中心の小さな核
+    const coreR = baseR * 0.18 * (0.9 + 0.2 * Math.sin(T * 4));
+    const coreHue = (T * 60) % 360;
+    const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+    cg.addColorStop(0, `hsla(${coreHue}, 100%, 75%, ${0.7 * pointerActivity})`);
+    cg.addColorStop(1, `hsla(${coreHue}, 100%, 85%, 0)`);
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   function frame(now) {
     const dt = Math.min((now - last) / 1000, 0.05);
@@ -115,7 +187,10 @@
       ctx.fillRect(0, 0, W, H);
     }
 
-    // ---- 4. 星（常時表示・固定位置・サイズだけ脈動）----
+    // ---- 4. 触ったらアメーバ（雲の上・星の下）----
+    drawAmoeba(dt);
+
+    // ---- 5. 星（常時表示・固定位置・サイズだけ脈動）----
     for (const s of stars) {
       // サイズが 0.55〜1.0 倍で脈動（完全には消えない）
       const raw = 0.5 + 0.5 * Math.sin(T * s.twSpeed + s.twPhase);
