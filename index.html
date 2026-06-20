@@ -203,37 +203,52 @@
     }
   }
 
-  // フワッと舞う光の粒（個別の色を持たず、白光＋わずかな色）
-  const N = 60;
-  const motes = [];
+  // キラキラ — 雲の手前で常時きらめく光の粒（normal合成・低alphaで暗くならない）
+  const N = 140;
+  const sparks = [];
   for (let i = 0; i < N; i++) {
-    motes.push({
+    sparks.push({
       a: Math.random() * Math.PI * 2,
-      r: Math.random() * 0.6 + 0.1,
-      s: 0.3 + Math.random() * 0.8,
-      ph: Math.random() * Math.PI * 2,
-      size: 2 + Math.random() * 6
+      r: 0.05 + Math.random() * 0.7,   // 中心〜縁まで分布
+      spin: (Math.random() - 0.5) * 0.6,
+      drift: Math.random() * Math.PI * 2,
+      twSpeed: 1.5 + Math.random() * 3.5,   // 個別のまたたき速度
+      twPhase: Math.random() * Math.PI * 2,
+      hueOff: Math.random() * 360,
+      size: 1.2 + Math.random() * 3.0
     });
   }
-  function drawMotes() {
+  function drawSparks() {
     ctx.globalCompositeOperation = 'source-over';
     const baseR = Math.min(W, H);
-    for (const m of motes) {
-      const ang = m.a + T * m.s * 0.2;
-      const rad = baseR * (m.r + 0.05 * Math.sin(T * m.s + m.ph));
+    for (const s of sparks) {
+      // ゆっくり中心を漂う
+      const ang = s.a + T * s.spin * 0.15 + Math.sin(T * 0.4 + s.drift) * 0.2;
+      const rad = baseR * (s.r + 0.03 * Math.sin(T * 0.7 + s.drift));
       const x = CX + Math.cos(ang) * rad;
       const y = CY + Math.sin(ang) * rad;
-      const tw = 0.5 + 0.5 * Math.sin(T * 2 + m.ph);
-      const hue = (T * 40 + m.ph * 60) % 360;
-      const r = m.size * DPR * (0.8 + 0.4 * tw);
 
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-      g.addColorStop(0,   `hsla(${hue}, 90%, 75%, ${0.45 * tw})`);
-      g.addColorStop(0.4, `hsla(${hue}, 90%, 80%, ${0.15 * tw})`);
-      g.addColorStop(1,   `hsla(${hue}, 90%, 85%, 0)`);
+      // またたき (0〜1)
+      const tw = 0.5 + 0.5 * Math.sin(T * s.twSpeed + s.twPhase);
+      const tw2 = tw * tw;            // 強めにメリハリ
+      const hue = (s.hueOff + T * 50) % 360;
+      const rr = s.size * DPR * (0.7 + 0.6 * tw);
+
+      // コア（小さく明るく）
+      const g = ctx.createRadialGradient(x, y, 0, x, y, rr * 8);
+      g.addColorStop(0,    `hsla(${hue}, 95%, 80%, ${0.55 * tw2})`);
+      g.addColorStop(0.15, `hsla(${hue}, 95%, 80%, ${0.25 * tw2})`);
+      g.addColorStop(0.5,  `hsla(${hue}, 90%, 85%, ${0.08 * tw2})`);
+      g.addColorStop(1,    `hsla(${hue}, 90%, 90%, 0)`);
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(x, y, r * 4, 0, Math.PI * 2);
+      ctx.arc(x, y, rr * 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 中心の白点
+      ctx.fillStyle = `hsla(${hue}, 100%, 95%, ${0.85 * tw2})`;
+      ctx.beginPath();
+      ctx.arc(x, y, rr * 0.8, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -260,7 +275,7 @@
     drawCore();     // 中央の鼓動
     updateRings(dt);
     drawRings();    // 虹の輪
-    drawMotes();    // 漂う光の粒
+    drawSparks();   // キラキラ（常時きらめく光の粒）
 
     requestAnimationFrame(frame);
   }
