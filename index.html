@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Amoeba Cosmic Background</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #ffffff;
+    width: 100%;
+    height: 100%;
+    cursor: none;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  #hint {
+    position: fixed;
+    left: 12px;
+    bottom: 10px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 11px;
+    color: rgba(0,0,0,0.25);
+    user-select: none;
+    pointer-events: none;
+    transition: opacity 0.6s;
+  }
+  body.idle #hint { opacity: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hint">F = フルスクリーン / Space = フェーズ切替 / ↑↓ = 強度</div>
+<script>
+(() => {
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  let W = 0, H = 0, CX = 0, CY = 0, DPR = 1, R = 0;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.width  = Math.floor(window.innerWidth  * DPR);
+    H = canvas.height = Math.floor(window.innerHeight * DPR);
+    canvas.style.width  = window.innerWidth  + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    CX = W / 2; CY = H / 2;
+    R  = Math.hypot(W, H) * 0.5;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // 七色（赤・橙・黄・緑・青・藍・紫）
+  const HUES = [0, 35, 55, 130, 210, 255, 295];
+
+  // 7つの「レインボー雲」 — それぞれ1色の大きなソフトグラデーション
+  // すべて normal 合成 + 低 alpha なので重なっても暗くならない
+  const clouds = HUES.map((h, i) => ({
+    hue: h,
+    baseAngle: (i / HUES.length) * Math.PI * 2,
+    phaseOff: Math.random() * Math.PI * 2,
+    x: 0, y: 0, r: 0, alpha: 0
+  }));
+
+  // フェーズ: 0=渦, 1=収束, 2=拡散, 3=脈動, 4=ゆらぎ
+  let phase = 0;
+  let phaseT = 0;
+  let manualPhase = false;
+  const phaseDuration = 8.0;
+  let intensity = 1.0;
+  let T = 0; // 経過時間
+
+  let last = performance.now();
+
+  // 1〜0で滑らかな補間（イーズ）
+  function ease(t) { return t * t * (3 - 2 * t); }
+
+  function updateClouds(dt) {
+    // フェーズ遷移のための補間（前後フェーズを混ぜる）
+    const inT  = Math.min(1, phaseT / 1.5);    // フェード入
+    const outT = Math.min(1, (phaseDuration - phaseT) / 1.5);
+    const blend = ease(Math.min(inT, outT));   // 0→1→0
+    const baseR = Math.min(W, H);
+
+    for (let i = 0; i < clouds.length; i++) {
+      const c = clouds[i];
+      const angle = c.baseAngle + T * 0.12;            // 全体回転
+      let tx, ty, tr, ta;
+
+      switch (phase) {
+        case 0: { // 渦 — 中心の周りを大きく回る
+          const orbit = baseR * 0.30;
+          tx = CX + Math.cos(angle) * orbit;
+          ty = CY + Math.sin(angle) * orbit;
+          tr = baseR * 0.55;
+          ta = 0.22;
+          break;
+        }
+        case 1: { // 収束 — 中央に集まる
+          const orbit = baseR * (0.05 + 0.03 * Math.sin(T * 1.5 + c.phaseOff));
+          tx = CX + Math.cos(angle * 2) * orbit;
+          ty = CY + Math.sin(angle * 2) * orbit;
+          tr = baseR * 0.45;
+          ta = 0.30;
+          break;
+        }
+        case 2: { // 拡散 — 全方位に大きく広がる
+          const orbit = baseR * 0.55;
+          tx = CX + Math.cos(angle) * orbit;
+          ty = CY + Math.sin(angle) * orbit;
+          tr = baseR * 0.70;
+          ta = 0.18;
+          break;
+        }
+        case 3: { // 脈動 — 全雲が一斉に内外
+          const beat = 0.5 + 0.5 * Math.sin(T * 1.6);
+          const orbit = baseR * (0.10 + 0.35 * beat);
+          tx = CX + Math.cos(angle) * orbit;
+          ty = CY + Math.sin(angle) * orbit;
+          tr = baseR * (0.45 + 0.15 * beat);
+          ta = 0.20 + 0.10 * beat;
+          break;
+        }
+        case 4: { // 有機ゆらぎ — それぞれ漂う
+          const t = T * 0.6 + c.phaseOff;
+          tx = CX + Math.cos(angle + Math.sin(t) * 0.6) * baseR * (0.18 + 0.10 * Math.sin(t * 1.3));
+          ty = CY + Math.sin(angle + Math.cos(t) * 0.6) * baseR * (0.18 + 0.10 * Math.cos(t * 1.1));
+          tr = baseR * (0.45 + 0.08 * Math.sin(t * 0.9));
+          ta = 0.22;
+          break;
+        }
+      }
+
+      // ふっくら追従（バネのような）
+      const k = 3.0 * dt;
+      c.x = c.x ? c.x + (tx - c.x) * k : tx;
+      c.y = c.y ? c.y + (ty - c.y) * k : ty;
+      c.r = c.r ? c.r + (tr - c.r) * k : tr;
+      c.alpha = c.alpha + (ta * intensity * (0.5 + 0.5 * blend) - c.alpha) * k;
+
+      // 色相もゆっくりレインボーが回る
+      c.hue = (HUES[i] + T * 8) % 360;
+    }
+  }
+
+  function drawClouds() {
+    ctx.globalCompositeOperation = 'source-over';
+    for (const c of clouds) {
+      const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.r);
+      g.addColorStop(0,    `hsla(${c.hue}, 95%, 65%, ${c.alpha})`);
+      g.addColorStop(0.5,  `hsla(${c.hue}, 90%, 70%, ${c.alpha * 0.45})`);
+      g.addColorStop(1,    `hsla(${c.hue}, 90%, 75%, 0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  // 中央の光のコア（生命の鼓動）
+  function drawCore() {
+    const pulse = 0.5 + 0.5 * Math.sin(T * 1.6);
+    const coreR = Math.min(W, H) * (0.10 + 0.06 * pulse) * intensity;
+    const hue = (T * 35) % 360;
+    const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, coreR);
+    g.addColorStop(0,   `hsla(${hue}, 100%, 80%, 0.35)`);
+    g.addColorStop(0.5, `hsla(${(hue + 60) % 360}, 100%, 85%, 0.15)`);
+    g.addColorStop(1,   `hsla(${(hue + 120) % 360}, 100%, 90%, 0)`);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // 周期的に広がるレインボーの輪（ふっと現れて消える）
+  let rings = [];
+  let nextRingAt = 3.0;
+  function updateRings(dt) {
+    if (T > nextRingAt) {
+      rings.push({ t: 0, life: 4.5 });
+      nextRingAt = T + 4.0 + Math.random() * 2.0;
+    }
+    for (const r of rings) r.t += dt;
+    rings = rings.filter(r => r.t < r.life);
+  }
+  function drawRings() {
+    ctx.globalCompositeOperation = 'source-over';
+    for (const r of rings) {
+      const p = r.t / r.life;             // 0→1
+      const radius = R * 1.1 * ease(p);
+      const alpha = (1 - p) * 0.25;
+      const thickness = (8 + 30 * (1 - p)) * DPR;
+
+      // 七色を細い同心円で（虹そのもの）
+      for (let i = 0; i < HUES.length; i++) {
+        const hue = (HUES[i] + T * 15) % 360;
+        ctx.strokeStyle = `hsla(${hue}, 90%, 65%, ${alpha * 0.55})`;
+        ctx.lineWidth = thickness / HUES.length;
+        ctx.beginPath();
+        ctx.arc(CX, CY, radius + (i - 3) * (thickness / HUES.length), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // フワッと舞う光の粒（個別の色を持たず、白光＋わずかな色）
+  const N = 60;
+  const motes = [];
+  for (let i = 0; i < N; i++) {
+    motes.push({
+      a: Math.random() * Math.PI * 2,
+      r: Math.random() * 0.6 + 0.1,
+      s: 0.3 + Math.random() * 0.8,
+      ph: Math.random() * Math.PI * 2,
+      size: 2 + Math.random() * 6
+    });
+  }
+  function drawMotes() {
+    ctx.globalCompositeOperation = 'source-over';
+    const baseR = Math.min(W, H);
+    for (const m of motes) {
+      const ang = m.a + T * m.s * 0.2;
+      const rad = baseR * (m.r + 0.05 * Math.sin(T * m.s + m.ph));
+      const x = CX + Math.cos(ang) * rad;
+      const y = CY + Math.sin(ang) * rad;
+      const tw = 0.5 + 0.5 * Math.sin(T * 2 + m.ph);
+      const hue = (T * 40 + m.ph * 60) % 360;
+      const r = m.size * DPR * (0.8 + 0.4 * tw);
+
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+      g.addColorStop(0,   `hsla(${hue}, 90%, 75%, ${0.45 * tw})`);
+      g.addColorStop(0.4, `hsla(${hue}, 90%, 80%, ${0.15 * tw})`);
+      g.addColorStop(1,   `hsla(${hue}, 90%, 85%, 0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    T += dt;
+    phaseT += dt;
+
+    if (!manualPhase && phaseT > phaseDuration) {
+      phase = (phase + 1) % 5;
+      phaseT = 0;
+    }
+
+    // 真っ白で塗りつぶす（ゴーストなし、純白基調）
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    // 描画レイヤー
+    updateClouds(dt);
+    drawClouds();   // 七色の大グラデーション
+    drawCore();     // 中央の鼓動
+    updateRings(dt);
+    drawRings();    // 虹の輪
+    drawMotes();    // 漂う光の粒
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- 操作 ----
+  let idleTimer = null;
+  function showHint() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add('idle'), 3000);
+  }
+  showHint();
+  window.addEventListener('mousemove', showHint);
+
+  document.addEventListener('keydown', (e) => {
+    showHint();
+    if (e.key === 'f' || e.key === 'F') {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+      else document.exitFullscreen();
+    } else if (e.code === 'Space') {
+      e.preventDefault();
+      manualPhase = true;
+      phase = (phase + 1) % 5;
+      phaseT = 0;
+      setTimeout(() => { manualPhase = false; }, 100);
+    } else if (e.key === 'ArrowUp') {
+      intensity = Math.min(2.5, intensity + 0.15);
+    } else if (e.key === 'ArrowDown') {
+      intensity = Math.max(0.3, intensity - 0.15);
+    } else if (e.key >= '1' && e.key <= '5') {
+      phase = parseInt(e.key, 10) - 1;
+      phaseT = 0;
+    }
+  });
+
+  canvas.addEventListener('click', () => {
+    phase = (phase + 1) % 5;
+    phaseT = 0;
+  });
+})();
+</script>
+</body>
+</html>
